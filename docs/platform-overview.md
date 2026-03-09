@@ -45,19 +45,38 @@ PolyON은 **기업 인프라 통합 플랫폼**입니다.
 └─────────────────────────────────────────────────────┘
 ```
 
-## 3. Foundation 인프라 서비스
+## 3. Foundation 서비스
 
-모든 모듈이 공유하는 인프라 레이어입니다. 모듈은 이 인프라를 직접 사용합니다.
+Foundation은 3개 계층으로 구성됩니다. 모듈은 **Platform Resource Claim(PRC)**을
+통해 이 인프라를 선언적으로 요청합니다. → [PRC 상세 규격](platform-resource-claim-spec.md)
 
-| 서비스 | 기술 | 내부 호스트 | 포트 | 용도 |
-|--------|------|-------------|------|------|
-| **AD DC** | Samba AD DC | `polyon-dc` | 389 (LDAP) | 계정 원천 (Active Directory) |
-| **Database** | PostgreSQL 18 | `polyon-db` | 5432 | 관계형 데이터 저장 |
-| **Object Storage** | RustFS | `polyon-rustfs` | 9000 (S3) | 파일/오브젝트 저장 |
-| **Cache** | Redis 8 | `polyon-redis` | 6379 | 세션/캐시 |
-| **Search** | OpenSearch 3.x | `polyon-search` | 9200 | 전문 검색 |
-| **SSO** | Keycloak | `polyon-auth` | 8080 | OIDC/SAML 인증 |
-| **Ingress** | Traefik v3 | `traefik` | 443 | 외부 진입점 |
+### 3.1 Infrastructure Layer (상태 유지, 항상 실행)
+
+| # | 서비스 | 기술 | 내부 호스트 | 포트 | Claim Type | 용도 |
+|---|--------|------|-------------|------|------------|------|
+| 1 | **Database** | PostgreSQL 18 | `polyon-db` | 5432 | `database` | 관계형 데이터 저장 |
+| 2 | **Cache** | Redis 8 | `polyon-redis` | 6379 | `cache` | 세션/캐시 |
+| 3 | **Search** | OpenSearch 3.x | `polyon-search` | 9200 | `search` | 전문 검색 |
+| 4 | **Object Storage** | RustFS | `polyon-rustfs` | 9000 (S3) | `objectStorage` | 파일/오브젝트 저장 |
+| 5 | **AD DC** | Samba AD DC | `polyon-dc` | 389 (LDAP) | `directory` | 계정 원천 (Active Directory) |
+| 6 | **Mail** | Stalwart | `polyon-mail` | 25/587/993 | `smtp` | 이메일 서비스 |
+| 7 | **Git** | Gitea | `polyon-gitea` | 3000 | `git` | 소스 코드 / 버전 관리 |
+
+### 3.2 Capability Layer (무상태, API 기반)
+
+| # | 서비스 | 기술 | 내부 호스트 | 포트 | Claim Type | 용도 |
+|---|--------|------|-------------|------|------------|------|
+| 8 | **AI Gateway** | LiteLLM / 자체 | `polyon-ai-gateway` | 8080 | `ai` | LLM 추론, 임베딩, 비전 |
+
+### 3.3 Platform Layer (Claim 대상 아님)
+
+| 서비스 | 기술 | 내부 호스트 | 용도 |
+|--------|------|-------------|------|
+| **Ingress** | Traefik v3 | `traefik` | 외부 진입점, TLS 종단 |
+| **SSO** | Keycloak | `polyon-auth` | OIDC/SAML 인증 |
+| **Core** | Go (Chi) | `polyon-core` | API 서버, 모듈 관리 |
+| **Console** | React (Carbon) | `polyon-console` | 관리자 UI |
+| **Portal** | React (Carbon) | `polyon-portal` | 사용자 UI |
 
 ## 4. 핵심 개념
 
