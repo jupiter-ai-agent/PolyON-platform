@@ -9,7 +9,7 @@
 
 PRC(Platform Resource Claim)는 모듈이 `module.yaml`의 `spec.claims`에 선언적으로 자원을 요청하면, Core가 자동으로 프로비저닝하는 시스템이다.
 
-이 문서는 **8개 Foundation Provider**의 정확한 사양을 정의한다.  
+이 문서는 **9개 Foundation Provider**의 정확한 사양을 정의한다.  
 모듈 개발자는 이 문서만 보고 claims를 작성할 수 있어야 한다.
 
 ---
@@ -471,6 +471,75 @@ spec:
   ingress:
     subdomain: drive
     port: 8080
+```
+
+---
+
+---
+
+## 9. auth — Keycloak OIDC 클라이언트
+
+### 역할
+모듈 설치 시 **Keycloak `polyon` realm에 OIDC 클라이언트를 자동 등록**한다.  
+PP 제1원칙(모든 서비스는 Keycloak SSO)을 모듈 수준에서 자동화.
+
+### Config
+
+| Key | 설명 | 기본값 |
+|-----|------|--------|
+| `clientId` | Keycloak 클라이언트 ID | `{moduleId}` |
+| `accessType` | `public` (PKCE SPA) 또는 `confidential` | `public` |
+| `redirectUris` | 허용 리다이렉트 URI 목록 | `["https://{moduleId}.{baseDomain}/*"]` |
+| `webOrigins` | CORS 허용 출처 | `["https://console.{baseDomain}", "https://portal.{baseDomain}"]` |
+
+### Credential (주입되는 환경변수)
+
+| Key | 설명 | 예시 |
+|-----|------|------|
+| `issuer` | OIDC Issuer URL | `https://auth.cmars.com/realms/polyon` |
+| `clientId` | 등록된 클라이언트 ID | `odoo` |
+| `clientSecret` | 시크릿 (confidential만) | `a3f8b2c1-...` |
+| `authEndpoint` | Authorization URL | `https://auth.cmars.com/realms/polyon/protocol/openid-connect/auth` |
+| `tokenEndpoint` | Token URL | `https://auth.cmars.com/realms/polyon/protocol/openid-connect/token` |
+| `jwksUri` | JWKS URL | `https://auth.cmars.com/realms/polyon/protocol/openid-connect/certs` |
+
+### env 템플릿 예시
+
+```yaml
+env:
+  OIDC_ISSUER: "{{ claims.auth.issuer }}"
+  OIDC_CLIENT_ID: "{{ claims.auth.clientId }}"
+  # confidential 타입인 경우:
+  # OIDC_CLIENT_SECRET: "{{ claims.auth.clientSecret }}"
+  OIDC_AUTH_ENDPOINT: "{{ claims.auth.authEndpoint }}"
+  OIDC_TOKEN_ENDPOINT: "{{ claims.auth.tokenEndpoint }}"
+  OIDC_JWKS_URI: "{{ claims.auth.jwksUri }}"
+```
+
+### 프로비저닝 동작
+
+1. Keycloak Admin API (`/admin/realms/polyon/clients`) 호출
+2. 클라이언트 생성: ID, accessType, redirectUris, webOrigins 설정
+3. public 타입: PKCE 활성화 (`pkce.code.challenge.method = S256`)
+4. confidential 타입: client secret 생성 후 Secret에 주입
+5. 삭제 시: 클라이언트 삭제 (Saga 보상)
+
+### Saga 보상
+- **Provision**: Keycloak 클라이언트 생성
+- **Compensate**: Keycloak 클라이언트 삭제
+
+### module.yaml 예시
+
+```yaml
+claims:
+  - type: auth
+    config:
+      clientId: odoo
+      accessType: public
+      redirectUris:
+        - "https://odoo.{{ baseDomain }}/*"
+        - "https://console.{{ baseDomain }}/modules/odoo/*"
+        - "https://portal.{{ baseDomain }}/modules/odoo/*"
 ```
 
 ---
