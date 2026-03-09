@@ -67,7 +67,7 @@ PP의 Foundation은 3개 계층으로 분류됩니다.
 | 5 | Infrastructure | Samba AD DC | `directory` | 서비스 계정 OU + 바인드 DN 발급 |
 | 6 | Infrastructure | Stalwart Mail | `smtp` | 서비스 발송 계정 + 도메인 설정 |
 | 7 | Infrastructure | Gitea | `git` | Organization + Repository + API 토큰 발급 |
-| 8 | Capability | AI Gateway | `ai` | 모듈 전용 API 토큰 + 모델 허용 목록 + Rate Limit |
+| 8 | Capability | AI Gateway (LiteLLM) | `ai` | Virtual Key 발급 + 모델 허용 + Rate Limit + Spend Tracking |
 
 ### 2.3 Foundation 자체의 자원 요청
 

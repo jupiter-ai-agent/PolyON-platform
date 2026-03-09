@@ -610,10 +610,10 @@ DELETE http://polyon-gitea:3000/api/v1/users/{svc-user}/tokens/{tokenId}
 | 항목 | 값 |
 |------|-----|
 | **Claim Type** | `ai` |
-| **기술** | PP 자체 개발 (Go) |
+| **기술** | LiteLLM Proxy (Python) + PP Integration Layer |
 | **K8s 서비스** | `polyon-ai` |
 | **포트** | 8080 |
-| **이미지** | `jupitertriangles/polyon-ai:v{semver}` |
+| **이미지** | `jupitertriangles/polyon-ai:v{semver}` (LiteLLM 베이스) |
 | **계층** | Capability |
 | **의존** | PG, Redis (Layer 3) |
 
@@ -621,6 +621,25 @@ DELETE http://polyon-gitea:3000/api/v1/users/{svc-user}/tokens/{tokenId}
 
 AI Gateway는 **PP의 AI 자원 통합 관문**입니다.
 단순 API 프록시가 아니라, 조직의 AI 사용을 **통제하고 감사**하는 시스템입니다.
+
+#### 기술 선택: LiteLLM (보스 승인 2026-03-09)
+
+| 항목 | 값 |
+|------|-----|
+| **베이스** | [LiteLLM Proxy](https://github.com/BerriAI/litellm) (MIT 라이선스) |
+| **언어** | Python — PP 내 유일한 Python 컨테이너 (스택 오염 없음) |
+| **채택 이유** | 100+ Provider 지원, Virtual Keys, Spend Tracking, Rate Limit, PG 감사 로그 **기 구현** |
+| **커버리지** | PP 요구사항의 **~80% 기 구현** → 자체 개발은 PP 통합 레이어만 |
+| **대안 검토** | Bifrost (Go, 경량) — Provider/감사 기능 부족으로 자체 개발량 과다 → 불채택 |
+
+**PP 자체 개발 범위 (Integration Layer):**
+| 항목 | 설명 |
+|------|------|
+| LiteLLM config.yaml 자동 생성 | Operator 부트스트랩 시 Provider 설정 주입 |
+| PRC → Virtual Key 발급 | LiteLLM `/key/generate` API로 모듈별 토큰 생성 |
+| Console 관리 페이지 | Provider 관리, 정책, 사용량 대시보드 (Carbon Design) |
+| Kill Switch | LiteLLM `/key/update` (budget=0) 또는 `/key/delete` |
+| Dockerfile | LiteLLM 베이스 이미지 + PP 설정 오버레이 |
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
@@ -932,7 +951,7 @@ providers:
     priority: 1                # 로컬 우선
 ```
 
-### 9.7 Claim → Provision
+### 9.7 Claim → Provision (LiteLLM Admin API 활용)
 
 **모듈 요청:**
 ```yaml
@@ -943,39 +962,38 @@ claims:
         - chat
         - embedding
       rateLimit: 1000/day       # 선택
+      costCap: "$30/month"      # 선택
 ```
 
-**Operator 실행:**
+**Operator 실행 (LiteLLM `/key/generate` 호출):**
 ```go
-// 1. 모듈 전용 API 토큰 생성
-moduleToken := fmt.Sprintf("mod_%s_%s", moduleID, generateSecurePassword(16))
-
-// 2. AI Gateway에 모듈 등록
-POST http://polyon-ai:8080/internal/modules
-{
-    "moduleId": "drive",
-    "token": moduleToken,
-    "capabilities": ["chat", "embedding"],
-    "rateLimit": "1000/day",
-    "allowedModels": null  // null = 전역 정책 따름
-}
-
-// 3. 토큰 → module_claims에 저장
+// LiteLLM Admin API로 Virtual Key 발급
+resp, err := http.Post("http://polyon-ai:4000/key/generate", "application/json",
+    json.Marshal(map[string]interface{}{
+        "models":      getAllowedModels(claim.Config["capabilities"]),
+        "max_budget":  30.0,     // $30/month
+        "tpm_limit":   100000,   // tokens per minute
+        "metadata": map[string]string{
+            "module_id": claim.ModuleID,
+            "managed_by": "polyon-operator",
+        },
+    }))
+// resp.key = "sk-polyon-drive-xxxx"
 ```
 
 **주입 Credentials:**
 | 키 | 예시 |
 |----|------|
-| `endpoint` | `http://polyon-ai:8080/v1` |
-| `apiKey` | `mod_drive_{token}` |
+| `endpoint` | `http://polyon-ai:4000/v1` |
+| `apiKey` | `sk-polyon-drive-xxxx` (LiteLLM Virtual Key) |
 | `models` | `gpt-4o-mini,text-embedding-3-small` |
 
 ### 9.8 Deprovision
 
 ```go
-// AI Gateway에서 모듈 등록 해제
-DELETE http://polyon-ai:8080/internal/modules/drive
-// 토큰 무효화
+// LiteLLM Virtual Key 삭제
+POST http://polyon-ai:4000/key/delete
+{ "keys": ["sk-polyon-drive-xxxx"] }
 ```
 
 ### 9.9 부트스트랩 의존성
@@ -990,11 +1008,11 @@ AI Gateway 자체의 Foundation Claim (정적 부트스트랩):
 
 | Phase | 내용 |
 |-------|------|
-| **v0.1** | OpenAI proxy + 토큰 인증 + 감사 로그 (최소 기능) |
-| **v0.2** | 다중 provider + 라우팅 정책 + Rate Limit |
-| **v0.3** | 비용 추적 + Console 대시보드 |
-| **v0.4** | 콘텐츠 필터링 + 이상 감지 + Kill Switch |
-| **v1.0** | Ollama 로컬 모델 통합 + 모델 관리 |
+| **v0.1** | LiteLLM Proxy 배포 + PG/Redis 연결 + 기본 Provider 설정 |
+| **v0.2** | PRC 연동 — Claim→Virtual Key 자동 발급, Operator 통합 |
+| **v0.3** | Console 관리 페이지 — Provider 관리, 정책, 사용량 대시보드 |
+| **v0.4** | Kill Switch + 콘텐츠 필터링 (LiteLLM guardrails) |
+| **v1.0** | Ollama 로컬 모델 통합 + 모델 관리 + 이상 감지 |
 
 ---
 
