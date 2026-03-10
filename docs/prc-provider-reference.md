@@ -485,23 +485,48 @@ PP 제1원칙(모든 서비스는 Keycloak SSO)을 모듈 수준에서 자동화
 
 ### Config
 
-| Key | 설명 | 기본값 |
-|-----|------|--------|
-| `clientId` | Keycloak 클라이언트 ID | `{moduleId}` |
-| `accessType` | `public` (PKCE SPA) 또는 `confidential` | `public` |
-| `redirectUris` | 허용 리다이렉트 URI 목록 | `["https://{moduleId}.{baseDomain}/*"]` |
-| `webOrigins` | CORS 허용 출처 | `["https://console.{baseDomain}", "https://portal.{baseDomain}"]` |
+| Key | Type | 기본값 | 설명 |
+|-----|------|--------|------|
+| `clientId` | string | `{moduleId}` | Keycloak 클라이언트 ID |
+| `accessType` | string | **`confidential`** | `public` (PKCE SPA) 또는 `confidential` (서버앱) |
+| `redirectUris` | []string | `["https://{moduleId}.{baseDomain}/*"]` | 허용 리다이렉트 URI 목록 |
+| `webOrigins` | []string | `["https://console.{baseDomain}", "https://portal.{baseDomain}"]` | CORS 허용 출처 |
+| `pkce` | bool | `false` | confidential에서 PKCE 강제 여부 (public은 항상 S256) |
+| `scopes` | []string | `["openid", "profile", "email"]` | 요청 스코프 |
+
+> ⚠️ **accessType 기본값은 `confidential`** — 모듈은 대부분 서버앱이므로.
+> `public`은 SPA(브라우저 전용) 모듈에서만 사용.
+
+### accessType 결정 기준
+
+| accessType | 용도 | client_secret | PKCE |
+|------------|------|--------------|------|
+| `confidential` | 서버앱 (백엔드, 토큰 교환) | ✅ 자동 발급 | 기본 해제 |
+| `public` | SPA (브라우저 전용, secret 불가) | ❌ 없음 | S256 강제 |
 
 ### Credential (주입되는 환경변수)
 
-| Key | 설명 | 예시 |
-|-----|------|------|
-| `issuer` | OIDC Issuer URL | `https://auth.cmars.com/realms/polyon` |
-| `clientId` | 등록된 클라이언트 ID | `odoo` |
-| `clientSecret` | 시크릿 (confidential만) | `a3f8b2c1-...` |
-| `authEndpoint` | Authorization URL | `https://auth.cmars.com/realms/polyon/protocol/openid-connect/auth` |
-| `tokenEndpoint` | Token URL | `https://auth.cmars.com/realms/polyon/protocol/openid-connect/token` |
-| `jwksUri` | JWKS URL | `https://auth.cmars.com/realms/polyon/protocol/openid-connect/certs` |
+| Key | 설명 | URL 유형 | 예시 |
+|-----|------|---------|------|
+| `issuer` | OIDC Issuer | 외부 | `https://sso.cmars.com/realms/polyon` |
+| `clientId` | 클라이언트 ID | — | `odoo` |
+| `clientSecret` | 시크릿 (confidential만) | — | `8Y57hxiU...` |
+| `authEndpoint` | Authorization URL | **외부** | `https://sso.cmars.com/.../auth` |
+| `tokenEndpoint` | Token URL | **내부** | `http://polyon-auth:8080/.../token` |
+| `tokenEndpointExternal` | Token URL (외부) | 외부 | `https://sso.cmars.com/.../token` |
+| `jwksUri` | JWKS URL | **내부** | `http://polyon-auth:8080/.../certs` |
+| `jwksUriExternal` | JWKS URL (외부) | 외부 | `https://sso.cmars.com/.../certs` |
+
+> ⚠️ **내부/외부 URL 분리 (2026-03-10 교훈)**
+>
+> | 엔드포인트 | 누가 호출하는가 | 사용할 URL |
+> |-----------|--------------|-----------|
+> | `authEndpoint` | **브라우저** (사용자 리다이렉트) | **외부** |
+> | `tokenEndpoint` | **서버** (백채널 토큰 교환) | **내부** |
+> | `jwksUri` | **서버** (JWT 서명 검증) | **내부** |
+>
+> K8s Pod 내부에서 외부 도메인(`sso.cmars.com`)은 `127.0.0.1`(자기 자신)로 해석될 수 있다.
+> **서버 간 통신은 반드시 K8s 내부 서비스명(`polyon-auth:8080`)을 사용한다.**
 
 ### env 템플릿 예시
 
@@ -509,24 +534,29 @@ PP 제1원칙(모든 서비스는 Keycloak SSO)을 모듈 수준에서 자동화
 env:
   OIDC_ISSUER: "{{ claims.auth.issuer }}"
   OIDC_CLIENT_ID: "{{ claims.auth.clientId }}"
-  # confidential 타입인 경우:
-  # OIDC_CLIENT_SECRET: "{{ claims.auth.clientSecret }}"
-  OIDC_AUTH_ENDPOINT: "{{ claims.auth.authEndpoint }}"
-  OIDC_TOKEN_ENDPOINT: "{{ claims.auth.tokenEndpoint }}"
-  OIDC_JWKS_URI: "{{ claims.auth.jwksUri }}"
+  OIDC_CLIENT_SECRET: "{{ claims.auth.clientSecret }}"      # confidential 필수
+  OIDC_AUTH_ENDPOINT: "{{ claims.auth.authEndpoint }}"       # 외부 URL (브라우저용)
+  OIDC_TOKEN_ENDPOINT: "{{ claims.auth.tokenEndpoint }}"     # 내부 URL (서버용)
+  OIDC_JWKS_URI: "{{ claims.auth.jwksUri }}"                 # 내부 URL (서버용)
 ```
 
 ### 프로비저닝 동작
 
-1. Keycloak Admin API (`/admin/realms/polyon/clients`) 호출
-2. 클라이언트 생성: ID, accessType, redirectUris, webOrigins 설정
-3. public 타입: PKCE 활성화 (`pkce.code.challenge.method = S256`)
-4. confidential 타입: client secret 생성 후 Secret에 주입
-5. 삭제 시: 클라이언트 삭제 (Saga 보상)
+1. Keycloak Admin API 토큰 획득 (내부 URL: `http://polyon-auth:8080`)
+2. 기존 클라이언트 확인 → 존재하면 재사용
+3. 클라이언트 생성:
+   - `publicClient`: accessType에 따라 결정
+   - `standardFlowEnabled: true`
+   - `redirectUris`: config에서 추출, `{{ baseDomain }}` 자동 치환
+   - `webOrigins`: console/portal/모듈 도메인 자동 추가
+4. accessType별 분기:
+   - **`public`**: PKCE S256 강제 (`pkce.code.challenge.method: S256`)
+   - **`confidential`**: PKCE 해제, client_secret 자동 발급
+5. Credential 생성: 내부/외부 URL 분리하여 반환
 
 ### Saga 보상
 - **Provision**: Keycloak 클라이언트 생성
-- **Compensate**: Keycloak 클라이언트 삭제
+- **Compensate**: Keycloak 클라이언트 삭제 (DELETE /admin/realms/{realm}/clients/{uuid})
 
 ### module.yaml 예시
 
@@ -535,7 +565,7 @@ claims:
   - type: auth
     config:
       clientId: odoo
-      accessType: public
+      accessType: confidential       # 서버앱은 confidential
       redirectUris:
         - "https://odoo.{{ baseDomain }}/*"
         - "https://console.{{ baseDomain }}/modules/odoo/*"
