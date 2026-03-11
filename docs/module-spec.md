@@ -18,32 +18,34 @@ PP(PolyON Platform) 위에서 동작하는 모듈의 기술 규격입니다.
 | 항목 | 설명 |
 |------|------|
 | **Docker 이미지** | OCI 호환 컨테이너 이미지. `linux/amd64` + `linux/arm64` 멀티플랫폼 |
-| **AD LDAP 인증** | Samba AD DC에 직접 LDAP bind (Pattern A 권장) |
-| **PostgreSQL 사용** | 관계형 데이터는 공유 PostgreSQL에 모듈별 DB로 저장 |
-| **RustFS S3 사용** | 파일/오브젝트는 RustFS(S3) 버킷에 저장. 로컬 파일 저장 금지 |
+| **module.yaml** | 이미지 내 `/polyon-module/module.yaml` — PP 규격 매니페스트 |
+| **PRC Claims** | `spec.claims`로 필요한 자원 선언 (database, objectStorage, auth 등) |
+| **Keycloak SSO** | 웹 UI는 Keycloak OIDC SSO가 기본 인증 (제1원칙) |
 | **Health Endpoint** | HTTP `GET /health` 또는 `/status` — K8s probe 용 |
-| **환경변수 설정** | 모든 외부 연결 정보는 환경변수로 주입 (하드코딩 금지) |
+| **환경변수 설정** | 모든 외부 연결 정보는 PRC가 주입하는 환경변수로 수신 (하드코딩 금지) |
 | **Stateless** | 앱 상태는 DB/S3에 저장. 컨테이너 재시작 시 데이터 손실 없음 |
 
 ### 2.2 권장 (SHOULD)
 
 | 항목 | 설명 |
 |------|------|
-| **Keycloak OIDC** | SSO가 필요한 경우 Keycloak polyon realm 클라이언트 사용 |
-| **OpenSearch 연동** | 검색 기능이 있으면 OpenSearch에 인덱싱 |
-| **WebDAV** | 파일 서비스의 경우 WebDAV 인터페이스 제공 |
+| **SDK 사용** | 자체 개발 모듈은 PolyON SDK (Go/Python)로 PRC config 파싱 + OIDC 검증 |
+| **OpenSearch 연동** | 검색 기능이 있으면 PRC `search` claim으로 OpenSearch에 인덱싱 |
 | **REST API** | Core가 호출할 수 있는 REST API 제공 |
 | **Graceful Shutdown** | SIGTERM 수신 시 연결 정리 후 종료 |
+| **PostMessage 프로토콜** | iframe 모듈은 `polyon:ready` → `polyon:init` handshake 구현 |
 
 ### 2.3 금지 (MUST NOT)
 
 | 항목 | 설명 |
 |------|------|
-| 자체 사용자 DB | 사용자 정보는 AD DC에서만 관리 |
-| 로컬 파일 저장 | PVC에 사용자 파일 저장 금지 (앱 코드/config만 허용) |
-| 다른 모듈 직접 호출 | 모듈 간 통신은 Core API 경유만 |
-| 호스트 포트 바인딩 | 외부 노출은 Traefik Ingress만 |
-| 자체 인증 시스템 | AD DC 또는 Keycloak만 사용 |
+| 자체 사용자 DB | 사용자 정보는 AD DC에서만 관리. 모듈 내 사용자 생성 금지 |
+| 로컬 파일 저장 | PVC에 사용자 파일 저장 금지 → RustFS(S3) 사용 (제7원칙) |
+| 다른 모듈 직접 호출 | 모듈 간 통신은 Core API 경유만 (제3원칙) |
+| 호스트 포트 바인딩 | 외부 노출은 Traefik Ingress만 (제5원칙) |
+| 자체 인증 시스템 | AD DC 또는 Keycloak만 사용. 자체 회원가입/로그인 금지 (제1원칙) |
+| K8s API 직접 호출 | 인프라 조작은 Core/PRC만 (제6원칙) |
+| 구형 `requires` 사용 | ~~`spec.requires`~~는 폐기됨. `spec.claims`만 사용 |
 
 ## 3. 인프라 연동 규격
 
